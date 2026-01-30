@@ -1,0 +1,406 @@
+'LOADING FUNCTIONS LIBRARY FROM REPOSITORY===========================================================================
+IF IsEmpty(FuncLib_URL) = TRUE THEN	'Shouldn't load FuncLib if it already loaded once
+	IF run_locally = FALSE or run_locally = "" THEN	   'If the scripts are set to run locally, it skips this and uses an FSO below.
+        FuncLib_URL = script_repository & "PRISM FUNCTIONS LIBRARY.vbs"
+		critical_error_msgbox = MsgBox ("The Functions Library code was not able to be reached by " & name_of_script & vbNewLine & vbNewLine &_
+              "FuncLib URL: " & FuncLib_URL & vbNewLine & vbNewLine &_
+              "The script has stopped. Send issues to " & contact_admin , _
+               vbOKonly + vbCritical, "BlueZone Scripts Critical Error")
+            StopScript
+	ELSE
+		FuncLib_URL = script_repository & "PRISM FUNCTIONS LIBRARY.vbs"
+		Set run_another_script_fso = CreateObject("Scripting.FileSystemObject")
+		Set fso_command = run_another_script_fso.OpenTextFile(FuncLib_URL)
+		text_from_the_other_script = fso_command.ReadAll
+		fso_command.Close
+		Execute text_from_the_other_script
+	END IF
+END IF
+'END FUNCTIONS LIBRARY BLOCK================================================================================================
+	
+
+'DIALOG----------------------------------------------------------------------------------------------------	
+
+BeginDialog Lump_Sum_dialog, 0, 0, 216, 150, "Lump Sum"
+  EditBox 60, 5, 70, 15, PRISM_case_number
+  CheckBox 15, 45, 90, 10, "Lump Sum Cover Letter", lump_letter
+  CheckBox 15, 55, 75, 10, "Lump Sum Affidavit", lump_aff
+  CheckBox 15, 65, 135, 10, "Lump Sum Income Withholding Notice", lump_iw
+  ButtonGroup ButtonPressed
+    OkButton 105, 130, 50, 15
+    CancelButton 160, 130, 50, 15
+  Text 10, 10, 45, 10, "Case Number"
+  Text 10, 30, 80, 10, "Lump Sum Documents"
+  Text 10, 85, 195, 10, "*  Don't forget to send the appropriate Affidavit of Service *"
+'  Text 70, 100, 70, 10, "SCRIPT AVAILABLE"
+'  Text 45, 115, 125, 10, "Agency Custom - Affidavit of Service"
+EndDialog
+
+'Connecting to BlueZone
+EMConnect ""
+
+'check for prism (password out)before continuing
+CALL check_for_PRISM(true)
+
+'brings me to the CAPS screen
+CALL navigate_to_PRISM_screen ("CAPS")
+
+'last date of previous month for Affidavit
+'EMReadScreen date, 2, 3, 8
+	current_month_minus1 = DateAdd("m", -1, date) 
+	c_month = datepart("m", current_month_minus1) 
+	IF len(c_month) = 1 THEN c_month = "0" & c_month 
+	c_begin_date = c_month & "/01/" & datepart("yyyy", current_month_minus1) 
+	begin_date = cdate(c_begin_date) 
+	begin_date_plus1 = DateAdd("m", 1, begin_date) 
+	end_date = DateAdd("d", -1, begin_date_plus1) 
+'msgbox (end_date)
+
+
+'this auto fills prism case number in dialog
+CALL PRISM_case_number_finder(PRISM_case_number)
+
+Do
+	err_msg = ""
+	Dialog Lump_Sum_dialog 'Shows name of dialog
+	IF buttonpressed = 0 then stopscript		'Cancel
+	IF PRISM_case_number = "" THEN err_msg = err_msg & vbNewline & "Prism case number must be completed"
+	IF lump_letter = 0 and lump_aff = 0 and lump_iw = 0 and POF_aff_service = 0 THEN err_msg = err_msg & vbNewline & "Please select at least one document!"
+	IF err_msg <> "" THEN 
+			MsgBox "***NOTICE!!!***" & vbNewline & err_msg & vbNewline & vbNewline & "Please resolve for the script to continue."
+	END IF
+
+LOOP UNTIL err_msg = ""
+'end dialog
+
+'EMPLOYER **
+'taking me to cast so i can read the employer to put in dialog box
+CALL navigate_to_PRISM_screen ("NCID")
+
+EMWriteScreen "B", 3, 29
+Transmit
+
+'it is reading employer name
+EMReadScreen Employer_Name, 30, 8, 51
+Employer_Name = Trim(Employer_Name)
+
+
+'NCP Name  first last suffix(jr).  no middle name.  Gretchen Brau or Gretchen Brau JR
+call navigate_to_PRISM_screen("NCDE")		
+EMReadScreen NCP_MCI, 10, 4, 7
+EMReadScreen NCP_F, 12, 8, 34
+EMReadScreen NCP_L, 17, 8, 8
+EMReadScreen NCP_S, 3, 8, 74
+
+NCP_name = fix_read_data(NCP_F) & " " & fix_read_data(NCP_L)
+If trim(NCP_S) <> "" then NCP_name = NCP_name & " " & ucase(fix_read_data(NCP_S))
+NCP_name = trim(NCP_name)
+
+'ARREARS BALANCE **
+'getting arrears amount
+CALL navigate_to_PRISM_screen("CAFS")
+EMReadScreen total_arrears, 10, 12, 68
+total_arrears = Trim(total_arrears)
+
+'---------------------  worker fax  
+
+'Preloading worker_fax, as a constant to be used in scripts---------------------------------------------------------------------------------------------------------
+'adding to each script with worker fax since can't add to master funclib in github and no local funclib is set up..... 03/23/2020
+'Needs to determine MyDocs directory before proceeding.
+'Set wshshell = CreateObject("WScript.Shell")
+'user_myDocs_folder = wshShell.SpecialFolders("MyDocuments") & "\"
+
+'Now it determines the signature
+'With (CreateObject("Scripting.FileSystemObject"))															'Creating an FSO
+'	If .FileExists(user_myDocs_folder & "workerfax.txt") Then												'If the workersig.txt file exists...
+'		Set get_worker_fax = CreateObject("Scripting.FileSystemObject")										'Create another FSO
+'		Set worker_fax_command = get_worker_fax.OpenTextFile(user_myDocs_folder & "workerfax.txt")			'Open the text file
+'		worker_fax = worker_fax_command.ReadAll																'Read the text file
+'		IF worker_fax <> "" THEN worker_fax_fax = worker_fax												'If it isn't blank then the worker_signature should be populated with the contents of the file
+'		worker_fax_command.Close																			'Closes the file
+'	END IF
+'END WITH
+
+
+'The following code looks to find the user name of the user running the script---------------------------------------------------------------------------------------------
+'This is used in arrays that specify functionality to specific workers
+Set objNet = CreateObject("WScript.NetWork")  
+windows_user_ID = objNet.UserName 
+
+'---------------------- end worker fax 
+
+'--------------------iw lump sum notice from DORD-------------------------------------------------
+IF lump_iw = 1 THEN
+
+CALL navigate_to_PRISM_screen ("DORD")
+		EMWriteScreen "C", 3, 29
+		transmit
+
+		EMWriteScreen "A", 3, 29
+		EMWriteScreen "F0023", 6, 36
+		transmit
+		PF3
+		PF3
+
+'shift f2, to get to user lables
+		PF14
+		EMWriteScreen "u", 20, 14
+		transmit
+		EMWriteScreen "s", 7, 5
+		EMWriteScreen "s", 8, 5
+		transmit
+		EMWriteScreen "x", 16, 15
+		transmit
+		EMWriteScreen (total_arrears), 16, 15
+		transmit
+		PF3
+		EMWriteScreen "M", 3, 29
+		transmit
+
+'''need to select employer and iw
+		BeginDialog IW_employer_dialog, 0, 0, 171, 95, "Select Employer and IW"
+  	 	  ButtonGroup ButtonPressed
+    	    	    OkButton 60, 75, 50, 15
+    	    	    CancelButton 115, 75, 50, 15
+  		  Text 35, 10, 100, 10, "IMPORTANT! IMPORTANT!"
+ 		  Text 5, 25, 130, 10, "1. Select the correct Employer and IW"
+  		  Text 5, 40, 55, 10, "2. Press ENTER"
+  		  Text 5, 55, 140, 10, "3.  THEN click OK for the script to continue"
+		EndDialog
+
+		Dialog IW_employer_dialog  'name of dialog
+		IF buttonpressed = 0 then stopscript		'Cancel' select employer ADD DIALOG
+
+END IF
+'----------------------------------end lump sum iw dord notice
+
+'------------------------------WORD DOC's---------------------------------------------------------------------------------------------
+
+IF lump_aff or lump_letter = checked THEN
+
+'Getting worker info for case note
+	CALL navigate_to_PRISM_screen ("CAPS")
+	EMSetCursor 5, 53
+	PF1
+	EMReadScreen worker_name, 27, 6, 50
+	EMReadScreen worker_phone, 12, 8, 35
+	PF3
+
+	'Cleaning up worker info
+	worker_name = trim(worker_name)
+	call fix_case(worker_name, 1)
+	worker_name = change_client_name_to_FML(worker_name)
+	
+	'job title
+	job_title = "Child Support Officer"
+
+'collecting legal heading info
+CALL navigate_to_PRISM_screen ("LEHD")
+EMWriteScreen "B", 3, 29
+transmit
+
+'''need to select legal heading Affidavit of Lump sum word doc
+
+	BeginDialog Lump_LH_dialog, 0, 0, 176, 100, "Legal Heading Affidavit Lump Sum"
+ 	 ButtonGroup ButtonPressed
+	   OkButton 60, 75, 50, 15
+    	   CancelButton 120, 75, 50, 15
+  	 Text 35, 10, 100, 10, "IMPORTANT! IMPORTANT!"
+  	 Text 5, 25, 165, 10, "1. Select the correct LEGAL HEADING for Affidavit"
+  	 Text 5, 40, 55, 10, "2. Press ENTER"
+  	 Text 5, 55, 140, 10, "3.  THEN click OK for the script to continue"
+	EndDialog
+		
+	Dialog Lump_LH_dialog  'name of dialog
+	IF buttonpressed = 0 then stopscript		'Cancel
+
+	'cp
+	EMReadScreen cp_additional_1, 40, 8, 30
+		cp_additional_1 = Trim(replace (cp_additional_1, "_", ""))
+	EMReadScreen cp_additional_2, 40, 9, 30
+		cp_additional_2 = Trim(replace (cp_additional_2, "_", ""))
+	EMReadScreen cp_additional_3, 40, 10, 30
+		cp_additional_3 = Trim(replace (cp_additional_3, "_", ""))
+		
+	cp_additional = TRIM(cp_additional_1 & " "  &   cp_additional_2 & " "  &   cp_additional_3)
+
+	EMReadScreen cp_legal, 40, 11, 30
+	cp_legal = Trim(replace (cp_legal, "_", ""))
+
+cp_legal_additional = cp_legal & " " & cp_additional
+
+	'reading role for CP
+	EMReadScreen cp_role, 3, 13, 30
+		if cp_role = "DEF" then cp_courtrole = "Defendant"
+		if cp_role = "OBE" then cp_courtrole = "Obligee"
+		if cp_role = "OBR" then cp_courtrole = "Obligor"
+		if cp_role = "PET" then cp_courtrole = "Petitioner"
+		if cp_role = "PLA" then cp_courtrole = "Plaintiff"
+		if cp_role = "RES" then cp_courtrole = "Respondent"
+	
+	EMReadScreen ncp_additional_1, 40, 15, 30
+		ncp_additional_1 = Trim(replace (ncp_additional_1, "_", ""))
+	EMReadScreen ncp_additional_2, 40, 16, 30
+		ncp_additional_2 = Trim(replace (ncp_additional_2, "_", ""))
+	EMReadScreen ncp_additional_3, 40, 17, 30
+		ncp_additional_3 = Trim(replace (ncp_additional_3, "_", ""))
+		
+	ncp_additional = TRIM(ncp_additional_1 & " "  &   ncp_additional_2 & " "  &   ncp_additional_3)
+
+	EMReadScreen Ncp_legal, 40, 18, 30
+	ncp_legal = Trim(replace (ncp_legal, "_", ""))	
+	'reading role for NCP
+	EmReadScreen ncp_role, 3, 20, 30		
+		if ncp_role = "DEF" then ncp_courtrole = "Defendant"
+		if ncp_role = "OBE" then ncp_courtrole = "Obligee"
+		if ncp_role = "OBR" then ncp_courtrole = "Obligor"
+		if ncp_role = "PET" then ncp_courtrole = "Petitioner"
+		if ncp_role = "PLA" then ncp_courtrole = "Plaintiff"
+		if ncp_role = "RES" then ncp_courtrole = "Respondent"
+	'IF ncp_additonal = "" THEN ncp_word_name = ncp_legal
+	'IF ncp_additonal <> "" THEN ncp_word_name = ncp_additonal & " " & ncp_legal
+	ncp_word_name = ncp_additional & " " & ncp_legal
+		ncp_word_name = Trim(replace (ncp_word_name, "  ", ""))
+
+	'find v or and for legal heading
+	EMReadScreen v_and, 1, 14, 30
+		IF v_and = "V" THEN v_and = "v."
+		IF v_and = "A" THEN v_and = "and"
+
+	PF11
+	
+	'case type
+	EMReadScreen case_type, 2, 8, 47   ' if 14 stop script
+		IF case_type = "14" THEN 
+			MsgBox "Case type 14 on LEHD is not valid.  Please update!  Script Ended.", VBExclamation
+			StopScript
+		END IF
+'		IF case_type = "14" THEN case_type = ""
+		IF case_type = "24" THEN case_type = "Custody"
+		IF case_type = "34" THEN case_type = "Paternity"
+		IF case_type = "44" THEN case_type = "Support"
+		IF case_type = "04" THEN case_type = "Dissolution with Child"
+
+
+	EMReadScreen court_file, 17, 16, 18
+		court_file = Trim(replace (court_file, "_", ""))
+
+	EmReadScreen legal_Reparites, 1, 9, 25
+	EmReadScreen legal_Remarriage, 1, 9, 59
+	EmReadScreen legal_statemn, 1, 10, 22
+	EmReadScreen legal_Rematter, 1, 10, 57
+		If legal_Reparites = "Y" then court_regarding = "Regarding the Parties"
+		If legal_Remarriage = "Y" then court_regarding = "In Re the Marriage of:"
+		If legal_statemn = "Y" then court_regarding = "State of Minnesota"
+		If legal_Rematter = "Y" then court_regarding = "In Re the Matter of:"
+
+	'adding intervenor information if there is one...
+	EmReadScreen legal_intervenor, 3, 14, 25
+		If legal_intervenor = "037" then 
+						and_int = "and"
+						county_int = "County of Dakota,"
+						intervenor_int = "Intervenor."
+						respondent_int = ","
+					else
+						respondent_int = "."
+		end if
+END IF
+
+'creating the word application object (if any of the Word docs are selected and making it visible)
+If _
+	lump_letter = checked or _
+	lump_aff = checked THEN
+
+
+		Set objWord = CreateObject("Word.Application")
+		objWord.Visible = True
+End If
+
+'lump affidavit
+IF lump_aff = checked THEN
+'creating the word application object (if any of the Word docs are selected and making it visible)
+	set objDoc = objWord.Documents.Add("F:\HS\Case\Child Support\Scripts\docs\Lump Sum - Affidavit.docx")
+		With objDoc
+			.Formfields ("case_type").Result = case_type
+			.Formfields ("in_re").Result = court_regarding
+			'If statement to write correct petitioner/respondent in the headers. 
+			IF cp_role = "PET" OR cp_role = "PLA" OR cp_role ="OBE" THEN			 'if CP is petitioner/plantiff we want to write CP's info in the petitioner field.
+				.Formfields ("cp_additional").Result = cp_additional
+				.Formfields ("cp_name").Result = cp_legal
+				.Formfields ("cp_role").Result = cp_courtrole
+			ELSE													'else we want to write the NCP's information in the petitioner field.	
+				.Formfields ("cp_additional").Result = ncp_additional
+				.Formfields ("cp_name").Result = ncp_legal
+				.Formfields ("cp_role").Result = ncp_courtrole			
+			END IF 
+			.Formfields ("v_and").Result = v_and
+			IF cp_role = "PET" OR cp_role = "PLA" OR cp_role = "OBE" THEN  			'if CP is petitioner/plantiff we want to write NCP's info in the respondent field.
+				.Formfields ("ncp_additional").Result = ncp_additional	
+				.Formfields ("ncp_name").Result = Ncp_legal
+				.Formfields ("ncp_role").Result = ncp_courtrole
+			ELSE													'else we want to write the CP's information in the respondent field.	
+				.Formfields ("ncp_additional").Result = cp_additional	
+				.Formfields ("ncp_name").Result = cp_legal
+				.Formfields ("ncp_role").Result = cp_courtrole			
+			END IF
+			.Formfields ("respondent_int").Result = respondent_int
+			.Formfields ("and_int").Result = and_int 
+			.Formfields ("county_int").Result = county_int
+			.Formfields ("intervenor_int").Result = intervenor_int  
+			.Formfields ("case_number").Result = PRISM_case_number		
+			.Formfields ("court_file").Result = court_file
+			.Formfields ("ncp_name2").Result = ncp_word_name
+			.Formfields ("ncp_name3").Result = ncp_word_name
+			.Formfields ("cp_name4").Result = cp_legal_additional
+			.Formfields ("ncp_name5").Result = ncp_word_name	
+			.Formfields ("worker_name").Result = worker_name
+			.Formfields ("Employer_name").Result = Employer_Name 	
+			.Formfields ("total_arrears").Result = total_arrears
+			.Formfields ("through_date").Result = end_date
+			.Formfields ("job_title").Result = job_title
+			.Formfields ("worker_name").Result = worker_name
+			.Formfields ("worker_phone").Result = worker_phone
+		END WITH
+
+'reminder to print and mail and scan documents
+MsgBox ( "IMPORTANT!!  IMPORTANT!!" & vbNewline & vbNewline &  "CHECK Affidavit FOR ACCURACY - Update Legal Heading and Remove EMPTY spaces as needed!" )	
+
+
+END IF
+'end of lump sum affidavit-------
+
+
+'lump cover letter
+IF lump_letter = checked THEN
+	set objDoc = objWord.Documents.Add("F:\HS\Case\Child Support\Scripts\docs\Lump Sum - Cover Letter.docx")
+		With objDoc
+			.Formfields ("Employer_name").Result = Employer_name
+			.Formfields ("ncp_name").Result = NCP_name	
+			.Formfields ("case_number").Result = PRISM_case_number		
+			.Formfields ("court_file").Result = court_file
+			.Formfields ("ncp_name2").Result = NCP_name
+			.Formfields ("ncp_name3").Result = NCP_name
+			.Formfields ("ncp_name4").Result = NCP_name
+			.Formfields ("ncp_name5").Result = NCP_name
+			.Formfields ("NCP_MCI").Result = NCP_MCI
+			.Formfields ("worker_name").Result = worker_name
+			.Formfields ("job_title").Result = job_title
+			.Formfields ("worker_phone").Result = worker_phone
+'			.Formfields ("worker_fax").Result = worker_fax
+		END WITH
+
+MsgBox ( "IMPORTANT!!  IMPORTANT!!" & vbNewline & vbNewline &  "CHECK Cover Letter FOR ACCURACY - Add claim number if known!" )
+	
+END IF
+
+'----------------END WORD DOC'S-------------------------------------------------------------------------
+
+
+MsgBox ( "IMPORTANT!!  IMPORTANT!!" & vbNewline & vbNewline & "REMEMBER: Affidavit of Service by mail" )
+' & vbNewline & vbNewline & "             - SCRIPT AVAILABLE - " & vbNewline &  "Agency Custom - Affidavit of Service" )
+
+'--Script Ending info -------------------
+
+
+
+Script_end_procedure("")
